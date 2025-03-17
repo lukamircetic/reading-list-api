@@ -24,6 +24,15 @@ func (s *Server) RegisterRoutes() http.Handler {
 
 	r.Get("/", s.HelloWorldHandler)
 
+	// TODO: add pagination
+	// took parts from chi example: https://github.com/go-chi/chi/blob/master/_examples/rest/main.go
+	r.Route("/articles", func(r chi.Router) {
+		// only getAll and Post for now, keeping it light
+		r.Get("/", GetAllArticles)
+		r.Post("/", CreateArticle)
+
+	})
+
 	r.Get("/health", s.healthHandler)
 
 	return r
