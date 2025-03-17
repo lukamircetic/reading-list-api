@@ -49,7 +49,28 @@ func New() Service {
 	dbInstance = &service{
 		db: db,
 	}
+
+	dbInstance.CreateTables()
+
 	return dbInstance
+}
+
+func (s *service) CreateTables() error {
+	sqlStatement := `
+	create table articles (
+		id integer not null primary key,
+		title text, summary text,
+		date_read text,
+		link text,
+		img_path text
+	);
+	`
+	_, err := s.db.Exec(sqlStatement)
+	if err != nil {
+		log.Println("Error: ", err)
+	}
+
+	return err
 }
 
 // Health checks the health of the database connection by pinging the database.
