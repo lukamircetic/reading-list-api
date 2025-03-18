@@ -2,13 +2,14 @@ package database
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"log"
 	"os"
+	"reading-list-api/internal/types"
 	"strconv"
 	"time"
 
+	"github.com/jmoiron/sqlx"
 	_ "github.com/joho/godotenv/autoload"
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -19,14 +20,14 @@ type Service interface {
 	// The keys and values in the map are service-specific.
 	Health() map[string]string
 	// InsertArticle([]types.Article) error
-	// GetAllArticles() error
+	GetAllArticles() (*[]types.Article, error)
 	// Close terminates the database connection.
 	// It returns an error if the connection cannot be closed.
 	Close() error
 }
 
 type service struct {
-	db *sql.DB
+	db *sqlx.DB
 }
 
 var (
@@ -40,7 +41,7 @@ func New() Service {
 		return dbInstance
 	}
 
-	db, err := sql.Open("sqlite3", dburl)
+	db, err := sqlx.Connect("sqlite3", dburl)
 	if err != nil {
 		// This will not be a connection error, but a DSN parse error or
 		// another initialization error.
@@ -60,12 +61,13 @@ func (s *service) CreateTables() error {
 	articlesTable := `
 	create table articles (
 		id integer not null primary key,
-		title text,
-		summary text,
-		date_read text,
-		link text,
-		img_path text,
-		type integer
+		title text not null default '',
+		author text not null default '',
+		summary text not null default '',
+		date_read text not null default '',
+		link text not null default '',
+		img_path text not null default '',
+		type integer not null default 0
 	);
 	`
 	_, err := s.db.Exec(articlesTable)
