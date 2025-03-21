@@ -1,11 +1,16 @@
 package server
 
 import (
+	"context"
 	"errors"
+	"fmt"
+	"log"
 	"net/http"
+	"os"
 	"reading-list-api/internal/types"
 
 	"github.com/go-chi/render"
+	"google.golang.org/genai"
 )
 
 type ArticleResponse struct {
@@ -45,6 +50,10 @@ func (rd *ArticleResponse) Render(w http.ResponseWriter, r *http.Request) error 
 	return nil
 }
 
+/*
+curl -H 'Content-Type: application/json' -d '{ "articleLink":"https://www.dgt.is/blog/2024-09-20-computer-keyboards/" }' -X POST http://localhost:8080/articles
+curl -H 'Content-Type: application/json' -d '{ "articleLink":"https://blog.railway.com/p/data-center-build-part-one" }' -X POST http://localhost:8080/articles
+*/
 func (s *Server) CreateArticle(w http.ResponseWriter, r *http.Request) {
 	// 1 - extract the article link from the request body
 	data := &ArticleRequest{}
@@ -54,14 +63,33 @@ func (s *Server) CreateArticle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// 1.5 - check if the link already exists in the db
+	articleLink := data.ArticleLink
+	exists, err := s.db.ArticleExists(articleLink)
 
-	// articleLink := data.ArticleLink
-	// err := s.db.articleExists(articleLink)
+	if err != nil {
+		fmt.Println("here 3")
+		render.Render(w, r, ErrInternalServer(err))
+		return
+	}
+
+	if exists {
+		fmt.Println("here 4")
+
+		render.Render(w, r, ErrInvalidRequest(fmt.Errorf("article exists in db")))
+		return
+	}
 
 	// 2 - send the article for extraction to gemini
 	// 3 - parse the gemini response (some form of json)
-	// 4 - return if the link isn't a article
+	// 4 - return if the link isn't an article
+	_, err = extractArticleMetadata(articleLink)
+	if err != nil {
+		fmt.Println("here 6")
+		render.Render(w, r, ErrInternalServer(err))
+		return
+	}
 	// 5 - create a db record for this article and populate all the fields
+
 	// 6 - return 200
 }
 
@@ -78,3 +106,73 @@ func (a *ArticleRequest) Bind(r *http.Request) error {
 
 	return nil
 }
+
+func extractArticleMetadata(articleLink string) (*types.Article, error) {
+	ctx := context.Background()
+	client, err := genai.NewClient(ctx, &genai.ClientConfig{
+		APIKey:  os.Getenv("GEMINI_API_KEY"),
+		Backend: genai.BackendGeminiAPI,
+	})
+	if err != nil {
+		log.Println("could not connect to gemini", err)
+		return nil, err
+	}
+
+	// model.ResponseMIMEType = "application/json"
+
+	// responseSchema := &genai.Schema{
+	// 	Type: genai.TypeObject,
+	// 	Properties: map[string]*genai.Schema{
+	// 		"title":         {Type: genai.TypeString},
+	// 		"author":        {Type: genai.TypeString},
+	// 		"summary":       {Type: genai.TypeString},
+	// 		"datePublished": {Type: genai.TypeString},
+	// 		"type":          {Type: genai.TypeString},
+	// 	},
+	// 	Required: []string{"title", "author", "summary", "type"},
+	// }
+	// var dynamicThreshold float32 = 0.6
+
+	config := &genai.GenerateContentConfig{
+		// ResponseMIMEType: "application/json",
+		// ResponseSchema:   responseSchema,
+		Tools: []*genai.Tool{
+			{
+				GoogleSearch: &genai.GoogleSearch{},
+				// GoogleSearchRetrieval: &genai.GoogleSearchRetrieval{
+				// 	DynamicRetrievalConfig: &genai.DynamicRetrievalConfig{
+				// 		DynamicThreshold: &dynamicThreshold,
+				// 	},
+				// },
+			},
+		},
+	}
+
+	prompt := fmt.Sprintf(`
+		Please find the following information about the content at this URL: %s Use web search to find the information.
+		Extract and provide the following information using this JSON schema:
+		- title: (Extract the full title of the article, book, or paper)
+		- author: (Extract the author of the content. If this content has multiple authors, specify one author et al. If you can't find the author's name in the post itself, look around the website to try and find it - common places are in the header, footer or below the title. If you still can't find the author write "")
+		- summary: (Provide a concise, single-sentence summary capturing the main topic or argument of the content.)
+		- datePublished: (Provide the publication date in YYYY-MM-DD format if possible. If only the year or month and year are available, provide those. If the date is not found, write "")
+		- type: (Please specify the enum value for the content type; 0 is for article, 1 is for academic/research paper, 2 is for book, if the provided url is not one of these types of content write -1)
+		`, articleLink,
+	)
+
+	resp := client.Models.GenerateContentStream(
+		ctx,
+		"gemini-2.0-flash",
+		genai.Text(prompt),
+		config,
+	)
+
+	if err != nil {
+		log.Println("prompt failed", err)
+		return nil, err
+	}
+
+	fmt.Println("json text", resp.Candidates[0].Content.Parts[0])
+	return nil, nil
+}
+
+// generate content stream investigate

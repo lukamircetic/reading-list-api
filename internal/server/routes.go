@@ -29,7 +29,7 @@ func (s *Server) RegisterRoutes() http.Handler {
 	r.Route("/articles", func(r chi.Router) {
 		// only getAll and Post for now, keeping it light
 		r.Get("/", s.GetArticlesHandler)
-		// r.Post("/", s.CreateArticle)
+		r.Post("/", s.CreateArticle)
 
 	})
 

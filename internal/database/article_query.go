@@ -1,6 +1,7 @@
 package database
 
 import (
+	"database/sql"
 	"log"
 	"reading-list-api/internal/types"
 )
@@ -16,4 +17,17 @@ func (s *service) GetAllArticles() (*[]types.Article, error) {
 		return nil, err
 	}
 	return &articles, nil
+}
+
+func (s *service) ArticleExists(link string) (bool, error) {
+	article := types.Article{}
+	query := `select * from articles where link = $1;`
+	err := s.db.Get(&article, query, link)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }

@@ -21,6 +21,7 @@ type Service interface {
 	Health() map[string]string
 	// InsertArticle([]types.Article) error
 	GetAllArticles() (*[]types.Article, error)
+	ArticleExists(string) (bool, error)
 	// Close terminates the database connection.
 	// It returns an error if the connection cannot be closed.
 	Close() error
@@ -65,6 +66,7 @@ func (s *service) CreateTables() error {
 		author text not null default '',
 		summary text not null default '',
 		date_read text not null default '',
+		date_published text not null default '',
 		link text not null default '',
 		img_path text not null default '',
 		type integer not null default 0
