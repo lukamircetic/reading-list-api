@@ -2,6 +2,7 @@ package database
 
 import (
 	"database/sql"
+	"fmt"
 	"log"
 	"reading-list-api/internal/types"
 )
@@ -30,4 +31,31 @@ func (s *service) ArticleExists(link string) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+func (s *service) InsertArticle(article *types.Article) error {
+	query := `
+		insert into articles (
+			title,
+			author,
+			summary,
+			date_read,
+			date_published,
+			link,
+			type
+		) values(
+			:title,
+			:author,
+			:summary,
+			:date_read,
+			:date_published,
+			:link,
+			:type
+		);
+	`
+	_, err := s.db.NamedExec(query, &article)
+	if err != nil {
+		return fmt.Errorf("error inserting into db: %v", err)
+	}
+	return nil
 }
