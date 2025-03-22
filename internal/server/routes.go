@@ -27,7 +27,6 @@ func (s *Server) RegisterRoutes() http.Handler {
 	// TODO: add pagination
 	// took parts from chi example: https://github.com/go-chi/chi/blob/master/_examples/rest/main.go
 	r.Route("/articles", func(r chi.Router) {
-		// only getAll and Post for now, keeping it light
 		r.Get("/", s.GetArticlesHandler)
 		r.Post("/", s.CreateArticle)
 
@@ -39,15 +38,34 @@ func (s *Server) RegisterRoutes() http.Handler {
 }
 
 func (s *Server) HelloWorldHandler(w http.ResponseWriter, r *http.Request) {
-	resp := make(map[string]string)
-	resp["message"] = "Hello World"
+	w.Header().Set("Content-Type", "application/json")
+
+	resp := map[string]map[string]string{
+		"GET /articles": {
+			"accepts":     "N/A",
+			"returns":     `[{id: integer, title: string, author: string, summary: string, dateRead: string, datePublished: string, link: string, img_path: string, type: integer}]`,
+			"description": "Returns all the articles",
+		},
+		"POST /articles": {
+			"accepts":     `{articleLink: string}`,
+			"returns":     `{id: integer, title: string, author: string, summary: string, dateRead: string, datePublished: string, link: string, img_path: string, type: integer}`,
+			"description": "Adds a new article using the provided link and returns the saved article metadata",
+		},
+		"GET /health": {
+			"accepts":     "N/A",
+			"returns":     "Database health status",
+			"description": "Returns the health status of the database",
+		},
+	}
 
 	jsonResp, err := json.Marshal(resp)
 	if err != nil {
-		log.Fatalf("error handling JSON marshal. Err: %v", err)
+		log.Printf("Error handling JSON marshal: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
 	}
 
-	_, _ = w.Write(jsonResp)
+	w.Write(jsonResp)
 }
 
 func (s *Server) healthHandler(w http.ResponseWriter, r *http.Request) {

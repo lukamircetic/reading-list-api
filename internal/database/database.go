@@ -19,7 +19,8 @@ type Service interface {
 	// Health returns a map of health status information.
 	// The keys and values in the map are service-specific.
 	Health() map[string]string
-	// InsertArticle([]types.Article) error
+
+	// DB ops
 	GetAllArticles() (*[]types.Article, error)
 	ArticleExists(string) (bool, error)
 	InsertArticle(*types.Article) error
@@ -77,20 +78,6 @@ func (s *service) CreateTables() error {
 	if err != nil {
 		log.Println("Error: ", err)
 	}
-
-	// insert sample data for development - remove this when done
-	for i := range 3 {
-		title := fmt.Sprintf("Article %d", i)
-		date := time.Now().Format("2006-01-02")
-		link := "https://github.com/lukamircetic/nba-shots"
-		path := "temp/images/"
-		stmt := fmt.Sprintf(`insert into articles(id, title, summary, date_read, link, img_path, type) values(%d, '%s', '%s', '%s', '%s', '%s', %d);`, i, title, "summary", date, link, path, i)
-		_, err2 := s.db.Exec(stmt)
-		if err2 != nil {
-			log.Println("Error", err2)
-		}
-	}
-	//
 	return err
 }
 

@@ -10,6 +10,7 @@ import (
 	"os"
 	"reading-list-api/internal/types"
 	"regexp"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/render"
@@ -53,10 +54,6 @@ func (rd *ArticleResponse) Render(w http.ResponseWriter, r *http.Request) error 
 	return nil
 }
 
-/*
-curl -H 'Content-Type: application/json' -d '{ "articleLink":"https://www.dgt.is/blog/2024-09-20-computer-keyboards/" }' -X POST http://localhost:8080/articles
-curl -H 'Content-Type: application/json' -d '{ "articleLink":"https://blog.railway.com/p/data-center-build-part-one" }' -X POST http://localhost:8080/articles
-*/
 func (s *Server) CreateArticle(w http.ResponseWriter, r *http.Request) {
 	// 1 - extract the article link from the request body
 	data := &ArticleRequest{}
@@ -65,40 +62,61 @@ func (s *Server) CreateArticle(w http.ResponseWriter, r *http.Request) {
 		render.Render(w, r, ErrInvalidRequest((err)))
 		return
 	}
-	// 1.5 - check if the link already exists in the db
+	// 2 - check if the link already exists in the db
 	articleLink := data.ArticleLink
 	exists, err := s.db.ArticleExists(articleLink)
 	if err != nil {
-		fmt.Println("here 3")
 		render.Render(w, r, ErrInternalServer(err))
 		return
 	}
 	if exists {
-		fmt.Println("here 4")
-
 		render.Render(w, r, ErrInvalidRequest(fmt.Errorf("article exists in db")))
 		return
 	}
 
-	// 2.1 - send the article for extraction to gemini
-	// 2.2 - parse the gemini response (some form of json)
-	// 2.3 - return an error if the link isn't an article
-	article, err := extractArticleMetadata(articleLink)
+	// 3 - get and validate article metadata using gemini
+	var article *types.Article
+	var extractionErr error
+	numRetries, err := strconv.Atoi(os.Getenv("NUM_RETRIES"))
 	if err != nil {
-		fmt.Println("here 6", err)
 		render.Render(w, r, ErrInternalServer(err))
 		return
 	}
 
-	// 5 - create a db record for this article and populate all the fields
+	// gemini search is flaky and sometimes doesn't run the prompt with search, so retry if that's the case
+	for attempt := range numRetries {
+		article, extractionErr = extractArticleMetadata(articleLink)
+		if extractionErr != nil {
+			render.Render(w, r, ErrInternalServer(extractionErr))
+			return
+		}
+
+		if article.Type >= 0 {
+			break
+		}
+
+		if article.Type == -1 {
+			render.Render(w, r, ErrInvalidRequest(fmt.Errorf("link supplied is not an article or book")))
+			return
+		}
+
+		if article.Type == -2 {
+			if attempt == numRetries-1 {
+				render.Render(w, r, ErrInvalidRequest(fmt.Errorf("unable to get gemini to use search... please try again")))
+				return
+			}
+			continue
+		}
+	}
+
+	// 4 - create a db record for this article and populate all the fields
 	err = s.db.InsertArticle(article)
 	if err != nil {
-		fmt.Println("here 7", err)
 		render.Render(w, r, ErrInternalServer(err))
 		return
 	}
 
-	// 6 - return posted article
+	// 5 - return posted article
 	err = render.Render(w, r, NewArticleResponse(article))
 	if err != nil {
 		render.Render(w, r, ErrRender(err))
@@ -112,8 +130,6 @@ type ArticleRequest struct {
 }
 
 func (a *ArticleRequest) Bind(r *http.Request) error {
-	// a.ArticleLink is nil if no Article fields are sent in the request. Return an
-	// error to avoid a nil pointer dereference.
 	if a.ArticleLink == "" {
 		return errors.New("missing required Article fields")
 	}
@@ -166,8 +182,6 @@ func extractArticleMetadata(articleLink string) (*types.Article, error) {
 			return nil, err
 		}
 		geminiContent = result.Candidates[0].Content.Parts[0].Text
-
-		fmt.Println(geminiContent)
 	}
 
 	re := regexp.MustCompile(`(?m)^(?s){(.*)}$`)
@@ -176,7 +190,8 @@ func extractArticleMetadata(articleLink string) (*types.Article, error) {
 		return nil, fmt.Errorf("could not parse gemini content with regex")
 	}
 
-	fmt.Println(cleanedString)
+	// use for debugging
+	// fmt.Println(cleanedString)
 
 	var geminiArticleMetadata GeminiArticleDetails
 
@@ -184,10 +199,6 @@ func extractArticleMetadata(articleLink string) (*types.Article, error) {
 	if err != nil {
 		fmt.Println("error unmarshalling", err)
 		return nil, err
-	}
-
-	if geminiArticleMetadata.Type == -1 {
-		return nil, fmt.Errorf("submitted link is not an article")
 	}
 
 	// create an article with a bunch of stuff
