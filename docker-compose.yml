@@ -1,0 +1,16 @@
+services:
+  reading-list-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: always
+    environment:
+      - APP_ENV=${APP_ENV}
+      - PORT=${PORT}
+      - DB_URL=${DB_URL}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - NUM_RETRIES=${NUM_RETRIES}
+    volumes:
+      - ./data:/app/data
+    ports:
+      - "${PORT}:${PORT}"

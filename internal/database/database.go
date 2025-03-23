@@ -34,7 +34,7 @@ type service struct {
 }
 
 var (
-	dburl      = os.Getenv("BLUEPRINT_DB_URL")
+	dburl      = os.Getenv("DB_URL")
 	dbInstance *service
 )
 
