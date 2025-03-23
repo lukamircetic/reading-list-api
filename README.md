@@ -1,6 +1,6 @@
-# Project reading-list-api
+# Reading List Server
 
-Simple reading list server for keeping track of articles you have read. Uses Gemini API for extracting article details and creating a short summary. Main use case for me is to show on my personal website what I've been reading.
+Simple reading list server/database using Go and sqlite for keeping track of articles you have read. Uses Gemini API for extracting article details and creating a short summary. Main use case for me is to show on my personal website what I've been reading.
 
 ## Getting Started
 
