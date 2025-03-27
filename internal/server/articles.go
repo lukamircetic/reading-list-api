@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"strconv"
 	"time"
 
+	htmltomarkdown "github.com/JohannesKaufmann/html-to-markdown/v2"
 	"github.com/go-chi/render"
 	"google.golang.org/genai"
 )
@@ -156,21 +158,25 @@ func extractArticleMetadata(articleLink string) (*types.Article, error) {
 			},
 		},
 	}
-
+	markdown, err := getArticleAsMarkdown(articleLink)
+	if err != nil {
+		return nil, err
+	}
+	// TODO: change prompt to use search if
 	prompt := fmt.Sprintf(`
-		Please find the following information about the content at this URL: %s Use web search to find the information.
-		Extract and provide the following information using this JSON schema:
+		From the content below the instructions, extract and provide the following information using this JSON schema:
 		- title: (Extract the full title of the article, book, or paper)
-		- author: (Extract the author(s) of the content. If you can't find the author's name in the post itself, look around the website to try and find it - common places are in the header, footer or below the title. If you still can't find the author write "")
-		- summary: (Provide a concise, single-sentence summary capturing the main topic or argument of the content.)
+		- author: (Extract the author(s) of the content. If it's not obvious make assumptions from the blog name. If you still can't find the author name write "")
+		- summary: (Provide a concise, single-sentence summary of the content in around 20 words or less.)
 		- datePublished: (Provide the publication date in YYYY-MM-DD format if possible. If only the year or month and year are available, provide those. If the date is not found, write "")
-		- type: (Please specify the enum value for the content type; 0 is for article, 1 is for academic/research paper, 2 is for book, if the provided url is not one of these types of content write -1, if you were unable to search the web for some reason write -2)
-		`, articleLink,
+		- type: (Please specify the enum value for the content type; 0 is for article, 1 is for academic/research paper, 2 is for book, if the provided url is not one of these types of content write -1)
+		Content to extract from: %s
+		`, *markdown,
 	)
 
 	stream := client.Models.GenerateContentStream(
 		ctx,
-		"gemini-2.0-flash",
+		"gemini-2.5-pro-exp-03-25",
 		genai.Text(prompt),
 		config,
 	)
@@ -224,6 +230,39 @@ type GeminiArticleDetails struct {
 	Type          int    `json:"type"`
 }
 
+func getArticleAsMarkdown(url string) (*string, error) {
+	client := &http.Client{}
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %v", err)
+	}
+
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36")
+	resp, err := client.Do(req)
+
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+
+	if err != nil {
+		return nil, fmt.Errorf("error reading resp body: %v", err)
+	}
+
+	content := string(body)
+	fmt.Println("content", content)
+	markdown, err := htmltomarkdown.ConvertString(content)
+	if err != nil {
+		return nil, fmt.Errorf("error converting to markdown: %v", err)
+	}
+
+	// log.Println("markdown", markdown)
+	return &markdown, nil
+}
+
 /* Keeping this schema here on the off chance that they fix this for 2.0-flash
 model.ResponseMIMEType = "application/json"
 responseSchema := &genai.Schema{
@@ -255,3 +294,15 @@ config := &genai.GenerateContentConfig{
 	},
 }
 */
+
+// OLD PROMPT
+// prompt := fmt.Sprintf(`
+// Please find the following information about the content at this URL: %s Use web search to find the information.
+// Extract and provide the following information using this JSON schema:
+// - title: (Extract the full title of the article, book, or paper)
+// - author: (Extract the author(s) of the content. If you can't find the author's name in the post itself, look around the website to try and find it - common places are in the header, footer or below the title. If you still can't find the author write "")
+// - summary: (Provide a concise, single-sentence summary capturing the main topic or argument of the content.)
+// - datePublished: (Provide the publication date in YYYY-MM-DD format if possible. If only the year or month and year are available, provide those. If the date is not found, write "")
+// - type: (Please specify the enum value for the content type; 0 is for article, 1 is for academic/research paper, 2 is for book, if the provided url is not one of these types of content write -1, if you were unable to search the web for some reason write -2)
+// `, articleLink,
+// )
