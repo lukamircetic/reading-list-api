@@ -61,6 +61,7 @@ func (s *Server) CreateArticle(w http.ResponseWriter, r *http.Request) {
 	data := &ArticleRequest{}
 	err := render.Bind(r, data)
 	if err != nil {
+		log.Println("error decoding request data", err)
 		render.Render(w, r, ErrInvalidRequest((err)))
 		return
 	}
@@ -114,6 +115,7 @@ func (s *Server) CreateArticle(w http.ResponseWriter, r *http.Request) {
 	// 4 - create a db record for this article and populate all the fields
 	err = s.db.InsertArticle(article)
 	if err != nil {
+		log.Println("error inserting article to db", err)
 		render.Render(w, r, ErrInternalServer(err))
 		return
 	}
@@ -160,6 +162,7 @@ func extractArticleMetadata(articleLink string) (*types.Article, error) {
 	}
 	markdown, err := getArticleAsMarkdown(articleLink)
 	if err != nil {
+		log.Println("error getting article as markdown: ", err)
 		return nil, err
 	}
 	// TODO: change prompt to use search if
@@ -235,6 +238,7 @@ func getArticleAsMarkdown(url string) (*string, error) {
 
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
+		log.Println("error creating http request", err)
 		return nil, fmt.Errorf("error creating request: %v", err)
 	}
 
@@ -242,6 +246,7 @@ func getArticleAsMarkdown(url string) (*string, error) {
 	resp, err := client.Do(req)
 
 	if err != nil {
+		log.Println("error requesting url", err)
 		return nil, fmt.Errorf("error executing request: %v", err)
 	}
 	defer resp.Body.Close()
@@ -249,13 +254,15 @@ func getArticleAsMarkdown(url string) (*string, error) {
 	body, err := io.ReadAll(resp.Body)
 
 	if err != nil {
+		log.Println("error reading resp body", err)
 		return nil, fmt.Errorf("error reading resp body: %v", err)
 	}
 
 	content := string(body)
-	fmt.Println("content", content)
+	// fmt.Println("content", content)
 	markdown, err := htmltomarkdown.ConvertString(content)
 	if err != nil {
+		log.Println("error converting to markdown", err)
 		return nil, fmt.Errorf("error converting to markdown: %v", err)
 	}
 
