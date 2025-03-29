@@ -10,7 +10,7 @@ import (
 func (s *service) GetAllArticles() (*[]types.Article, error) {
 	articles := make([]types.Article, 0)
 	query := `
-		select * from articles order by date_read desc, id asc;
+		select * from articles order by date_read desc, id desc;
 	`
 	err := s.db.Select(&articles, query)
 	if err != nil {
@@ -23,8 +23,8 @@ func (s *service) GetAllArticles() (*[]types.Article, error) {
 func (s *service) GetArticlePage(offset int, limit int) (*[]types.Article, error) {
 	articles := make([]types.Article, 0)
 	query := `
-		select * from articles
-		order by date_read desc, id asc
+		select * from articlesgit stat
+		order by date_read desc, id desc
 		limit ?
 		offset ?;
 	`
