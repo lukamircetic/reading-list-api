@@ -23,7 +23,7 @@ func (s *service) GetAllArticles() (*[]types.Article, error) {
 func (s *service) GetArticlePage(offset int, limit int) (*[]types.Article, error) {
 	articles := make([]types.Article, 0)
 	query := `
-		select * from articlesgit stat
+		select * from articles
 		order by date_read desc, id desc
 		limit ?
 		offset ?;
