@@ -10,7 +10,7 @@ import (
 func (s *service) GetAllArticles() (*[]types.Article, error) {
 	articles := make([]types.Article, 0)
 	query := `
-		select * from articles;
+		select * from articles order by date_read desc, id asc;
 	`
 	err := s.db.Select(&articles, query)
 	if err != nil {
@@ -18,6 +18,36 @@ func (s *service) GetAllArticles() (*[]types.Article, error) {
 		return nil, err
 	}
 	return &articles, nil
+}
+
+func (s *service) GetArticlePage(offset int, limit int) (*[]types.Article, error) {
+	articles := make([]types.Article, 0)
+	query := `
+		select * from articles
+		order by date_read desc, id asc
+		limit ?
+		offset ?;
+	`
+
+	err := s.db.Select(&articles, query, limit, offset)
+	if err != nil {
+		log.Println("error querying articles", err)
+		return nil, err
+	}
+	return &articles, nil
+}
+
+func (s *service) GetArticleCount() (int, error) {
+	var articleCount int
+	query := `
+		select count(*) from articles;
+	`
+	err := s.db.QueryRow(query).Scan(&articleCount)
+	if err != nil {
+		log.Println("error counting articles", err)
+		return 0, err
+	}
+	return articleCount, nil
 }
 
 func (s *service) ArticleExists(link string) (bool, error) {

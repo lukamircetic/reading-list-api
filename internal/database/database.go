@@ -22,7 +22,9 @@ type Service interface {
 
 	// DB ops
 	GetAllArticles() (*[]types.Article, error)
+	GetArticlePage(int, int) (*[]types.Article, error)
 	ArticleExists(string) (bool, error)
+	GetArticleCount() (int, error)
 	InsertArticle(*types.Article) error
 	// Close terminates the database connection.
 	// It returns an error if the connection cannot be closed.

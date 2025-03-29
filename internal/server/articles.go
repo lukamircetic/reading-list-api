@@ -19,11 +19,103 @@ import (
 	"google.golang.org/genai"
 )
 
+type contextKey string
+
+const (
+	PageCtxKey     contextKey = "Page"
+	PageSizeCtxKey contextKey = "PageSize"
+)
+
 type ArticleResponse struct {
 	*types.Article
 }
 
-func (s *Server) GetArticlesHandler(w http.ResponseWriter, r *http.Request) {
+type ArticlePageResponse struct {
+	TotalArticles int             `json:"totalArticles"`
+	Articles      []types.Article `json:"articles"`
+}
+
+func Paginate(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		page := 1
+		pageSize := 10
+
+		query := r.URL.Query()
+
+		pageStr := query.Get("page")
+		if pageStr != "" {
+			var err error
+			page, err = strconv.Atoi(pageStr)
+			if err != nil || page < 1 {
+				render.Render(w, r, ErrInvalidRequest(fmt.Errorf("invalid page number: %s", pageStr)))
+				return
+			}
+		}
+
+		ctx := context.WithValue(r.Context(), PageCtxKey, page)
+		ctx = context.WithValue(ctx, PageSizeCtxKey, pageSize)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+func (s *Server) GetArticlesPageHandler(w http.ResponseWriter, r *http.Request) {
+	// 0 - get the pagination info
+	page := r.Context().Value(PageCtxKey).(int)
+	pageSize := r.Context().Value(PageSizeCtxKey).(int)
+
+	// 0.5 get total number of articles in db
+	total, err := s.db.GetArticleCount()
+	if err != nil {
+		render.Render(w, r, ErrInternalServer(fmt.Errorf("error getting total article count: %v", err)))
+		return
+	}
+
+	offset := (page - 1) * pageSize
+
+	if offset < 0 || offset >= total || total == 0 {
+		empty := make([]types.Article, 0)
+		err = render.Render(w, r, NewArticlePageResponse(&empty, total))
+		if err != nil {
+			render.Render(w, r, ErrRender(err))
+		}
+		return
+	}
+
+	// 1 - query sqlite db for all articles
+	pageArticles, err := s.db.GetArticlePage(offset, pageSize)
+	if err != nil {
+		render.Render(w, r, ErrInternalServer(err))
+		return
+	}
+	fmt.Println("pages", len(*pageArticles), *pageArticles)
+
+	// 2 - return list of articles as a response
+	err = render.Render(w, r, NewArticlePageResponse(pageArticles, total))
+	if err != nil {
+		render.Render(w, r, ErrRender(err))
+		return
+	}
+}
+
+func NewArticlePageResponse(articles *[]types.Article, totalArticles int) *ArticlePageResponse {
+	var articlePageList []types.Article
+	if len(*articles) == 0 {
+		articlePageList = make([]types.Article, 0)
+	} else {
+		articlePageList = *articles
+	}
+	resp := &ArticlePageResponse{
+		TotalArticles: totalArticles,
+		Articles:      articlePageList,
+	}
+	return resp
+}
+
+func (rd *ArticlePageResponse) Render(w http.ResponseWriter, r *http.Request) error {
+	return nil
+}
+
+func (s *Server) GetAllArticlesHandler(w http.ResponseWriter, r *http.Request) {
 	// 1 - query sqlite db for all articles
 	articles, err := s.db.GetAllArticles()
 	if err != nil {
