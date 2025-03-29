@@ -169,7 +169,7 @@ func extractArticleMetadata(articleLink string) (*types.Article, error) {
 	prompt := fmt.Sprintf(`
 		From the content below the instructions, extract and provide the following information using this JSON schema:
 		- title: (Extract the full title of the article, book, or paper)
-		- author: (Extract the author(s) of the content. If it's not obvious make assumptions from the blog name. If you still can't find the author name write "")
+		- author: (Extract the author(s) of the content. If it's not obvious make assumptions from the blog name. If there are multiple authors, please return them comma-separated in a single string. If you still can't find the author name write "")
 		- summary: (Provide a concise, single-sentence summary of the content in around 20 words or less.)
 		- datePublished: (Provide the publication date in YYYY-MM-DD format if possible. If only the year or month and year are available, provide those. If the date is not found, write "")
 		- type: (Please specify the enum value for the content type; 0 is for article, 1 is for academic/research paper, 2 is for book, if the provided url is not one of these types of content write -1)
