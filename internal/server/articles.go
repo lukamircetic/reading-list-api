@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"os"
 	"reading-list-api/internal/types"
@@ -153,7 +152,7 @@ func (s *Server) CreateArticle(w http.ResponseWriter, r *http.Request) {
 	data := &ArticleRequest{}
 	err := render.Bind(r, data)
 	if err != nil {
-		log.Println("error decoding request data", err)
+		fmt.Println("error decoding request data", err)
 		render.Render(w, r, ErrInvalidRequest((err)))
 		return
 	}
@@ -207,7 +206,7 @@ func (s *Server) CreateArticle(w http.ResponseWriter, r *http.Request) {
 	// 4 - create a db record for this article and populate all the fields
 	err = s.db.InsertArticle(article)
 	if err != nil {
-		log.Println("error inserting article to db", err)
+		fmt.Println("error inserting article to db", err)
 		render.Render(w, r, ErrInternalServer(err))
 		return
 	}
@@ -240,7 +239,7 @@ func extractArticleMetadata(articleLink string) (*types.Article, error) {
 		Backend: genai.BackendGeminiAPI,
 	})
 	if err != nil {
-		log.Println("could not connect to gemini", err)
+		fmt.Println("could not connect to gemini", err)
 		return nil, err
 	}
 
@@ -254,7 +253,7 @@ func extractArticleMetadata(articleLink string) (*types.Article, error) {
 	}
 	markdown, err := getArticleAsMarkdown(articleLink)
 	if err != nil {
-		log.Println("error getting article as markdown: ", err)
+		fmt.Println("error getting article as markdown: ", err)
 		return nil, err
 	}
 	// TODO: change prompt to use search if
@@ -279,7 +278,7 @@ func extractArticleMetadata(articleLink string) (*types.Article, error) {
 	geminiContent := ""
 	for result, err := range stream {
 		if err != nil {
-			log.Println("prompt failed", err)
+			fmt.Println("prompt failed", err)
 			return nil, err
 		}
 		geminiContent = result.Candidates[0].Content.Parts[0].Text
@@ -330,7 +329,7 @@ func getArticleAsMarkdown(url string) (*string, error) {
 
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		log.Println("error creating http request", err)
+		fmt.Println("error creating http request", err)
 		return nil, fmt.Errorf("error creating request: %v", err)
 	}
 
@@ -338,7 +337,7 @@ func getArticleAsMarkdown(url string) (*string, error) {
 	resp, err := client.Do(req)
 
 	if err != nil {
-		log.Println("error requesting url", err)
+		fmt.Println("error requesting url", err)
 		return nil, fmt.Errorf("error executing request: %v", err)
 	}
 	defer resp.Body.Close()
@@ -346,7 +345,7 @@ func getArticleAsMarkdown(url string) (*string, error) {
 	body, err := io.ReadAll(resp.Body)
 
 	if err != nil {
-		log.Println("error reading resp body", err)
+		fmt.Println("error reading resp body", err)
 		return nil, fmt.Errorf("error reading resp body: %v", err)
 	}
 
@@ -354,11 +353,11 @@ func getArticleAsMarkdown(url string) (*string, error) {
 	// fmt.Println("content", content)
 	markdown, err := htmltomarkdown.ConvertString(content)
 	if err != nil {
-		log.Println("error converting to markdown", err)
+		fmt.Println("error converting to markdown", err)
 		return nil, fmt.Errorf("error converting to markdown: %v", err)
 	}
 
-	// log.Println("markdown", markdown)
+	// fmt.Println("markdown", markdown)
 	return &markdown, nil
 }
 

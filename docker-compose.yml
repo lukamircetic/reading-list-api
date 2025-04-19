@@ -16,7 +16,7 @@ services:
       - "${PORT}:${PORT}"
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:${PORT}/health"]
-      interval: 10s
+      interval: 60s
       timeout: 5s
       retries: 3
       start_period: 15s
