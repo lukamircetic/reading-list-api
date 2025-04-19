@@ -86,7 +86,7 @@ func (s *Server) GetArticlesPageHandler(w http.ResponseWriter, r *http.Request) 
 		render.Render(w, r, ErrInternalServer(err))
 		return
 	}
-	fmt.Println("pages", len(*pageArticles), *pageArticles)
+	// fmt.Println("pages", len(*pageArticles), *pageArticles)
 
 	// 2 - return list of articles as a response
 	err = render.Render(w, r, NewArticlePageResponse(pageArticles, total))
