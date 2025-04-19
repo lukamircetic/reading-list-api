@@ -287,7 +287,8 @@ func extractArticleMetadata(articleLink string) (*types.Article, error) {
 	re := regexp.MustCompile(`(?m)^(?s){(.*)}$`)
 	cleanedString := re.FindString(geminiContent)
 	if cleanedString == "" {
-		return nil, fmt.Errorf("could not parse gemini content with regex")
+		fmt.Println("gemini content", geminiContent)
+		return nil, fmt.Errorf("error could not parse gemini content with regex")
 	}
 
 	// use for debugging
