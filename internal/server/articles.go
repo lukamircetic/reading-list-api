@@ -211,11 +211,13 @@ func (a *ArticleRequest) Bind(r *http.Request) error {
 }
 
 func extractArticleMetadata(articleLink string) (*types.Article, error) {
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
 
 	orClient, err := llm.NewOpenRouterClient(llm.OpenRouterClientConfig{
-		APIKey: os.Getenv("OPENROUTER_API_KEY"),
-		Model:  "deepseek/deepseek-r1-0528:free",
+		APIKey:  os.Getenv("OPENROUTER_API_KEY"),
+		Model:   "deepseek/deepseek-r1-0528:free",
+		Timeout: 120 * time.Second,
 	})
 	if err != nil {
 		return nil, err

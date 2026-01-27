@@ -12,6 +12,7 @@ import (
 )
 
 const defaultOpenRouterBaseURL = "https://openrouter.ai/api/v1"
+const defaultOpenRouterTimeout = 120 * time.Second
 
 type OpenRouterClient struct {
 	apiKey  string
@@ -24,6 +25,9 @@ type OpenRouterClientConfig struct {
 	APIKey  string
 	Model   string
 	BaseURL string
+
+	// Optional. If set, used only when HTTPClient is nil.
+	Timeout time.Duration
 
 	HTTPClient *http.Client
 }
@@ -43,7 +47,11 @@ func NewOpenRouterClient(cfg OpenRouterClientConfig) (*OpenRouterClient, error) 
 
 	hc := cfg.HTTPClient
 	if hc == nil {
-		hc = &http.Client{Timeout: 45 * time.Second}
+		timeout := cfg.Timeout
+		if timeout <= 0 {
+			timeout = defaultOpenRouterTimeout
+		}
+		hc = &http.Client{Timeout: timeout}
 	}
 
 	return &OpenRouterClient{
