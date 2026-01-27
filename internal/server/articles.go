@@ -270,7 +270,7 @@ func extractArticleMetadata(articleLink string) (*types.Article, error) {
 
 	stream := client.Models.GenerateContentStream(
 		ctx,
-		"gemini-2.5-pro-exp-03-25",
+		"gemini-2.5-pro",
 		genai.Text(prompt),
 		config,
 	)
