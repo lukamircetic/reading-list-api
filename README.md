@@ -33,7 +33,12 @@ Clean up binary from the last build:
 make clean
 ```
 
-## Gemini API Key
+## OpenRouter API Key (DeepSeek)
 
-This project uses the `gemini-2.0-flash` model with Google Search. The free version of the API has 1500 free requests per day which is plenty for a reading list. Get your key [here](https://ai.google.dev/gemini-api/docs/api-key) and then add it to your `.env` file. Use the provided [.env.template](./.env.template) to know what variables to set.
+This project uses OpenRouter’s OpenAI-compatible API to call the `deepseek/deepseek-r1-0528:free` model (hardcoded).
+
+- Create an OpenRouter API key and set it in your env:
+  - `OPENROUTER_API_KEY`
+See OpenRouter docs: [`Using the OpenRouter API directly`](https://openrouter.ai/docs/quickstart#using-the-openrouter-api-directly).
+Use the provided env example file (`env.example`) to know what variables to set (copy it to `.env`).
 

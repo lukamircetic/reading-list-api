@@ -8,14 +8,15 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"reading-list-api/internal/llm"
 	"reading-list-api/internal/types"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	htmltomarkdown "github.com/JohannesKaufmann/html-to-markdown/v2"
 	"github.com/go-chi/render"
-	"google.golang.org/genai"
 )
 
 type contextKey string
@@ -168,39 +169,16 @@ func (s *Server) CreateArticle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 3 - get and validate article metadata using gemini
-	var article *types.Article
-	var extractionErr error
-	numRetries, err := strconv.Atoi(os.Getenv("NUM_RETRIES"))
+	// 3 - extract article metadata using OpenRouter (DeepSeek)
+	article, err := extractArticleMetadata(articleLink)
 	if err != nil {
 		render.Render(w, r, ErrInternalServer(err))
 		return
 	}
 
-	// gemini search is flaky and sometimes doesn't run the prompt with search, so retry if that's the case
-	for attempt := range numRetries {
-		article, extractionErr = extractArticleMetadata(articleLink)
-		if extractionErr != nil {
-			render.Render(w, r, ErrInternalServer(extractionErr))
-			return
-		}
-
-		if article.Type >= 0 {
-			break
-		}
-
-		if article.Type == -1 {
-			render.Render(w, r, ErrInvalidRequest(fmt.Errorf("link supplied is not an article or book")))
-			return
-		}
-
-		if article.Type == -2 {
-			if attempt == numRetries-1 {
-				render.Render(w, r, ErrInvalidRequest(fmt.Errorf("unable to get gemini to use search... please try again")))
-				return
-			}
-			continue
-		}
+	if article.Type == -1 {
+		render.Render(w, r, ErrInvalidRequest(fmt.Errorf("link supplied is not an article or book")))
+		return
 	}
 
 	// 4 - create a db record for this article and populate all the fields
@@ -234,81 +212,67 @@ func (a *ArticleRequest) Bind(r *http.Request) error {
 
 func extractArticleMetadata(articleLink string) (*types.Article, error) {
 	ctx := context.Background()
-	client, err := genai.NewClient(ctx, &genai.ClientConfig{
-		APIKey:  os.Getenv("GEMINI_API_KEY"),
-		Backend: genai.BackendGeminiAPI,
+
+	orClient, err := llm.NewOpenRouterClient(llm.OpenRouterClientConfig{
+		APIKey: os.Getenv("OPENROUTER_API_KEY"),
+		Model:  "deepseek/deepseek-r1-0528:free",
 	})
 	if err != nil {
-		fmt.Println("could not connect to gemini", err)
 		return nil, err
 	}
 
-	// source: https://github.com/google/generative-ai-go/issues/229
-	config := &genai.GenerateContentConfig{
-		Tools: []*genai.Tool{
-			{
-				GoogleSearch: &genai.GoogleSearch{},
-			},
-		},
-	}
 	markdown, err := getArticleAsMarkdown(articleLink)
 	if err != nil {
 		fmt.Println("error getting article as markdown: ", err)
 		return nil, err
 	}
-	// TODO: change prompt to use search if
 	prompt := fmt.Sprintf(`
-		From the content below the instructions, extract and provide the following information using this JSON schema:
-		- title: (Extract the full title of the article, book, or paper)
-		- author: (Extract the author(s) of the content. If it's not obvious make assumptions from the blog name. If there are multiple authors, please return them comma-separated in a single string. If you still can't find the author name write "")
-		- summary: (Provide a concise, single-sentence summary of the content in around 20 words or less.)
-		- datePublished: (Provide the publication date in YYYY-MM-DD format if possible. If only the year or month and year are available, provide those. If the date is not found, write "")
-		- type: (Please specify the enum value for the content type; 0 is for article, 1 is for academic/research paper, 2 is for book, if the provided url is not one of these types of content write -1)
-		Content to extract from: %s
+You are given extracted page content from a URL. Return ONLY a single JSON object (no prose, no markdown fences) matching this schema exactly:
+{
+  "title": string,
+  "author": string,
+  "summary": string,
+  "datePublished": string,
+  "type": number
+}
+
+Rules:
+- "title": you mustextract the full title of the article, book, or paper.
+- "author" You must extract the author(s) of the content. If it's not obvious make assumptions from the blog name. If there are multiple authors, please return them comma-separated in a single string. If you still can't find the author name write ""
+- "summary": must be a single sentence around 20 words or less.
+- "datePublished": should be YYYY-MM-DD if possible; otherwise YYYY-MM; otherwise YYYY; otherwise empty string.
+- "type": 0=article, 1=academic/research paper, 2=book, -1=not one of these.
+
+Page content:
+%s
 		`, *markdown,
 	)
 
-	stream := client.Models.GenerateContentStream(
-		ctx,
-		"gemini-2.5-pro",
-		genai.Text(prompt),
-		config,
-	)
-
-	geminiContent := ""
-	for result, err := range stream {
-		if err != nil {
-			fmt.Println("prompt failed", err)
-			return nil, err
-		}
-		geminiContent = result.Candidates[0].Content.Parts[0].Text
-	}
-
-	re := regexp.MustCompile(`(?m)^(?s){(.*)}$`)
-	cleanedString := re.FindString(geminiContent)
-	if cleanedString == "" {
-		fmt.Println("gemini content", geminiContent)
-		return nil, fmt.Errorf("error could not parse gemini content with regex")
-	}
-
-	// use for debugging
-	// fmt.Println(cleanedString)
-
-	var geminiArticleMetadata GeminiArticleDetails
-
-	err = json.Unmarshal([]byte(cleanedString), &geminiArticleMetadata)
+	content, err := orClient.ChatCompletion(ctx, prompt)
 	if err != nil {
+		fmt.Println("prompt failed", err)
+		return nil, err
+	}
+
+	cleanedString, err := extractJSONObject(content)
+	if err != nil {
+		fmt.Println("model content", content)
+		return nil, err
+	}
+
+	var extracted extractedArticleDetails
+	if err := json.Unmarshal([]byte(cleanedString), &extracted); err != nil {
 		fmt.Println("error unmarshalling", err)
 		return nil, err
 	}
 
 	// create an article with a bunch of stuff
 	article := &types.Article{
-		Title:         geminiArticleMetadata.Title,
-		Author:        geminiArticleMetadata.Author,
-		Summary:       geminiArticleMetadata.Summary,
-		DatePublished: geminiArticleMetadata.DatePublished,
-		Type:          geminiArticleMetadata.Type,
+		Title:         extracted.Title,
+		Author:        extracted.Author,
+		Summary:       extracted.Summary,
+		DatePublished: extracted.DatePublished,
+		Type:          extracted.Type,
 		DateRead:      time.Now().Format("2006-01-02"),
 		Link:          articleLink,
 	}
@@ -316,13 +280,28 @@ func extractArticleMetadata(articleLink string) (*types.Article, error) {
 	return article, nil
 }
 
-// generate content stream investigate
-type GeminiArticleDetails struct {
+type extractedArticleDetails struct {
 	Title         string `json:"title"`
 	Author        string `json:"author"`
 	Summary       string `json:"summary"`
 	DatePublished string `json:"datePublished"`
 	Type          int    `json:"type"`
+}
+
+func extractJSONObject(s string) (string, error) {
+	// Best-effort: many models sometimes add preambles. Extract the outermost JSON object.
+	start := strings.Index(s, "{")
+	end := strings.LastIndex(s, "}")
+	if start < 0 || end < 0 || end <= start {
+		// Keep legacy regex around for unusual formatting.
+		re := regexp.MustCompile(`(?m)^(?s){(.*)}$`)
+		cleaned := re.FindString(s)
+		if cleaned == "" {
+			return "", fmt.Errorf("error could not parse json object from model output")
+		}
+		return cleaned, nil
+	}
+	return s[start : end+1], nil
 }
 
 func getArticleAsMarkdown(url string) (*string, error) {
@@ -361,47 +340,3 @@ func getArticleAsMarkdown(url string) (*string, error) {
 	// fmt.Println("markdown", markdown)
 	return &markdown, nil
 }
-
-/* Keeping this schema here on the off chance that they fix this for 2.0-flash
-model.ResponseMIMEType = "application/json"
-responseSchema := &genai.Schema{
-	Type: genai.TypeObject,
-	Properties: map[string]*genai.Schema{
-		"title":         {Type: genai.TypeString},
-		"author":        {Type: genai.TypeString},
-		"summary":       {Type: genai.TypeString},
-		"datePublished": {Type: genai.TypeString},
-		"type":          {Type: genai.TypeString},
-	},
-	Required: []string{"title", "author", "summary", "type"},
-}
-var dynamicThreshold float32 = 0.6
-
-config := &genai.GenerateContentConfig{
-	// Response Schema isn't supported with GenerateContentStream, but GenerateContent doesn't support Search...
-	ResponseMIMEType: "application/json",
-	ResponseSchema:   responseSchema,
-	Tools: []*genai.Tool{
-		{
-			// For some reason Retrieval is not supported, yet it's in the interface...
-			GoogleSearchRetrieval: &genai.GoogleSearchRetrieval{
-				DynamicRetrievalConfig: &genai.DynamicRetrievalConfig{
-					DynamicThreshold: &dynamicThreshold,
-				},
-			},
-		},
-	},
-}
-*/
-
-// OLD PROMPT
-// prompt := fmt.Sprintf(`
-// Please find the following information about the content at this URL: %s Use web search to find the information.
-// Extract and provide the following information using this JSON schema:
-// - title: (Extract the full title of the article, book, or paper)
-// - author: (Extract the author(s) of the content. If you can't find the author's name in the post itself, look around the website to try and find it - common places are in the header, footer or below the title. If you still can't find the author write "")
-// - summary: (Provide a concise, single-sentence summary capturing the main topic or argument of the content.)
-// - datePublished: (Provide the publication date in YYYY-MM-DD format if possible. If only the year or month and year are available, provide those. If the date is not found, write "")
-// - type: (Please specify the enum value for the content type; 0 is for article, 1 is for academic/research paper, 2 is for book, if the provided url is not one of these types of content write -1, if you were unable to search the web for some reason write -2)
-// `, articleLink,
-// )

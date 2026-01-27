@@ -8,8 +8,7 @@ services:
       - APP_ENV=${APP_ENV}
       - PORT=${PORT}
       - DB_URL=${DB_URL}
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
-      - NUM_RETRIES=${NUM_RETRIES}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
     volumes:
       - ./data:/app/data
     ports:
