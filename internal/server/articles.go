@@ -5,17 +5,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
+	"net/url"
 	"os"
-	"reading-list-api/internal/llm"
+	"reading-list-api/internal/exa"
 	"reading-list-api/internal/types"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
-	htmltomarkdown "github.com/JohannesKaufmann/html-to-markdown/v2"
 	"github.com/go-chi/render"
 )
 
@@ -169,7 +167,7 @@ func (s *Server) CreateArticle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 3 - extract article metadata using OpenRouter (DeepSeek)
+	// 3 - extract article metadata using Exa
 	article, err := extractArticleMetadata(articleLink)
 	if err != nil {
 		render.Render(w, r, ErrInternalServer(err))
@@ -211,75 +209,86 @@ func (a *ArticleRequest) Bind(r *http.Request) error {
 }
 
 func extractArticleMetadata(articleLink string) (*types.Article, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	const (
+		exaTimeout           = 90 * time.Second
+		exaLivecrawlTimeout  = 20000 // ms
+		exaMaxTextCharacters = 12000
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), exaTimeout)
 	defer cancel()
 
-	orClient, err := llm.NewOpenRouterClient(llm.OpenRouterClientConfig{
-		APIKey:  os.Getenv("OPENROUTER_API_KEY"),
-		Model:   "deepseek/deepseek-r1-0528:free",
-		Timeout: 120 * time.Second,
+	exaClient, err := exa.NewClient(exa.ClientConfig{
+		APIKey:  os.Getenv("EXA_API_KEY"),
+		Timeout: exaTimeout,
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	markdown, err := getArticleAsMarkdown(articleLink)
+	extracted := (*extractedArticleDetails)(nil)
+
+	contents, err := exaClient.Contents(ctx, exa.ContentsRequest{
+		URLs: []string{articleLink},
+		Text: map[string]any{
+			"maxCharacters":   exaMaxTextCharacters,
+			"includeHtmlTags": false,
+		},
+		Summary: &exa.SummaryOptions{
+			Query:  exaExtractionRulesPrompt(),
+			Schema: exaExtractionSchema(),
+		},
+		Livecrawl:        "preferred",
+		LivecrawlTimeout: exaLivecrawlTimeout,
+	})
 	if err != nil {
-		fmt.Println("error getting article as markdown: ", err)
-		return nil, err
-	}
-	prompt := fmt.Sprintf(`
-You are given extracted page content from a URL. Return ONLY a single JSON object (no prose, no markdown fences) matching this schema exactly:
-{
-  "title": string,
-  "author": string,
-  "summary": string,
-  "datePublished": string,
-  "type": number
-}
-
-Rules:
-- "title": you mustextract the full title of the article, book, or paper.
-- "author" You must extract the author(s) of the content. If it's not obvious make assumptions from the blog name. If there are multiple authors, please return them comma-separated in a single string. If you still can't find the author name write ""
-- "summary": must be a single sentence around 20 words or less.
-- "datePublished": should be YYYY-MM-DD if possible; otherwise YYYY-MM; otherwise YYYY; otherwise empty string.
-- "type": 0=article, 1=academic/research paper, 2=book, -1=not one of these.
-
-Page content:
-%s
-		`, *markdown,
-	)
-
-	content, err := orClient.ChatCompletion(ctx, prompt)
-	if err != nil {
-		fmt.Println("prompt failed", err)
 		return nil, err
 	}
 
-	cleanedString, err := extractJSONObject(content)
-	if err != nil {
-		fmt.Println("model content", content)
+	if err := exaValidateStatuses(articleLink, contents.Statuses); err != nil {
 		return nil, err
 	}
 
-	var extracted extractedArticleDetails
-	if err := json.Unmarshal([]byte(cleanedString), &extracted); err != nil {
-		fmt.Println("error unmarshalling", err)
-		return nil, err
+	if len(contents.Results) == 0 {
+		return nil, fmt.Errorf("exa contents: no results returned")
 	}
 
-	// create an article with a bunch of stuff
-	article := &types.Article{
-		Title:         extracted.Title,
-		Author:        extracted.Author,
-		Summary:       extracted.Summary,
-		DatePublished: extracted.DatePublished,
-		Type:          extracted.Type,
+	res := contents.Results[0]
+
+	parsed, err := parseExtractedDetails(res.Summary)
+	if err == nil {
+		extracted = parsed
+	} else {
+		parsed, ansErr := exaExtractViaAnswer(ctx, exaClient, articleLink)
+		if ansErr != nil {
+			return nil, fmt.Errorf("exa extraction failed: %w", ansErr)
+		}
+		extracted = parsed
+	}
+
+	title := strings.TrimSpace(extracted.Title)
+	author := strings.TrimSpace(extracted.Author)
+	summary := strings.TrimSpace(extracted.Summary)
+	published := strings.TrimSpace(extracted.DatePublished)
+	kind := extracted.Type
+
+	if author == "" {
+		author = fallbackAuthorFromURL(articleLink)
+	}
+
+	if title == "" || summary == "" {
+		return nil, fmt.Errorf("exa extraction incomplete: title=%t summary=%t", title != "", summary != "")
+	}
+
+	return &types.Article{
+		Title:         title,
+		Author:        author,
+		Summary:       summary,
+		DatePublished: published,
+		Type:          kind,
 		DateRead:      time.Now().Format("2006-01-02"),
 		Link:          articleLink,
-	}
-
-	return article, nil
+	}, nil
 }
 
 type extractedArticleDetails struct {
@@ -290,55 +299,144 @@ type extractedArticleDetails struct {
 	Type          int    `json:"type"`
 }
 
-func extractJSONObject(s string) (string, error) {
-	// Best-effort: many models sometimes add preambles. Extract the outermost JSON object.
+func parseExtractedDetails(raw json.RawMessage) (*extractedArticleDetails, error) {
+	if len(raw) == 0 {
+		return nil, fmt.Errorf("empty summary")
+	}
+
+	// Could be an object OR a string (possibly containing JSON).
+	if raw[0] == '{' {
+		var out extractedArticleDetails
+		if err := json.Unmarshal(raw, &out); err != nil {
+			return nil, err
+		}
+		return &out, nil
+	}
+
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return nil, err
+	}
+	return parseExtractedDetailsFromString(s)
+}
+
+func parseExtractedDetailsFromString(s string) (*extractedArticleDetails, error) {
+	obj, err := extractJSONObjectFromString(s)
+	if err != nil {
+		return nil, err
+	}
+	var out extractedArticleDetails
+	if err := json.Unmarshal([]byte(obj), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func extractJSONObjectFromString(s string) (string, error) {
 	start := strings.Index(s, "{")
 	end := strings.LastIndex(s, "}")
 	if start < 0 || end < 0 || end <= start {
-		// Keep legacy regex around for unusual formatting.
-		re := regexp.MustCompile(`(?m)^(?s){(.*)}$`)
-		cleaned := re.FindString(s)
-		if cleaned == "" {
-			return "", fmt.Errorf("error could not parse json object from model output")
-		}
-		return cleaned, nil
+		return "", fmt.Errorf("could not find json object in string")
 	}
 	return s[start : end+1], nil
 }
 
-func getArticleAsMarkdown(url string) (*string, error) {
-	client := &http.Client{}
+func exaExtractionRulesPrompt() string {
+	// Keep this aligned with the DB fields. We still apply local guardrails (summary length/date format)
+	// even if the model drifts.
+	return strings.TrimSpace(`
+Extract article metadata from the provided URL and return ONLY a single JSON object matching the provided JSON Schema.
 
-	req, err := http.NewRequest("GET", url, nil)
+Rules:
+- title: full title.
+- author: author(s), comma-separated if multiple; if unknown return "".
+- summary: single sentence around 20 words or less.
+- datePublished: YYYY-MM-DD if possible; otherwise YYYY-MM; otherwise YYYY; otherwise "".
+- type: 0=article, 1=academic/research paper, 2=book, -1=not one of these.
+`)
+}
+
+func exaExtractionSchema() map[string]any {
+	return map[string]any{
+		"$schema": "http://json-schema.org/draft-07/schema#",
+		"type":    "object",
+		"properties": map[string]any{
+			"title": map[string]any{
+				"type":        "string",
+				"description": "Full title of the article, book, or paper.",
+			},
+			"author": map[string]any{
+				"type":        "string",
+				"description": "Author(s). If multiple, comma-separated. If unknown, empty string.",
+			},
+			"summary": map[string]any{
+				"type":        "string",
+				"description": "Single sentence summary ~20 words or less.",
+			},
+			"datePublished": map[string]any{
+				"type":        "string",
+				"description": "YYYY-MM-DD if possible; otherwise YYYY-MM; otherwise YYYY; otherwise empty string.",
+			},
+			"type": map[string]any{
+				"type":        "integer",
+				"description": "0=article, 1=academic/research paper, 2=book, -1=not one of these.",
+			},
+		},
+		"required": []string{"title", "author", "summary", "datePublished", "type"},
+	}
+}
+
+func exaValidateStatuses(articleLink string, statuses []exa.ContentStatus) error {
+	for _, st := range statuses {
+		if st.ID == articleLink && strings.EqualFold(st.Status, "error") {
+			if st.Error != nil && st.Error.Tag != "" {
+				return fmt.Errorf("exa contents: %s", st.Error.Tag)
+			}
+			return fmt.Errorf("exa contents: failed to fetch content")
+		}
+	}
+	return nil
+}
+
+func exaExtractViaAnswer(ctx context.Context, exaClient *exa.Client, articleLink string) (*extractedArticleDetails, error) {
+	answerResp, err := exaClient.Answer(ctx, exa.AnswerRequest{
+		Query: fmt.Sprintf(
+			`From this URL: %s
+Return ONLY a single JSON object (no prose, no markdown fences) matching:
+{"title": string, "author": string, "summary": string, "datePublished": string, "type": number}
+
+Rules:
+- title: full title.
+- author: author(s), comma-separated if multiple; if unknown return "".
+- summary: single sentence around 20 words or less.
+- datePublished: YYYY-MM-DD if possible; otherwise YYYY-MM; otherwise YYYY; otherwise "".
+- type: 0=article, 1=academic/research paper, 2=book, -1=not one of these.`,
+			articleLink,
+		),
+		Text: false,
+	})
 	if err != nil {
-		fmt.Println("error creating http request", err)
-		return nil, fmt.Errorf("error creating request: %v", err)
+		return nil, err
+	}
+	return parseExtractedDetailsFromString(answerResp.Answer)
+}
+
+
+func fallbackAuthorFromURL(link string) string {
+	u, err := url.Parse(link)
+	if err != nil {
+		return ""
+	}
+	host := strings.ToLower(u.Hostname())
+	host = strings.TrimPrefix(host, "www.")
+	if host == "" {
+		return ""
 	}
 
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36")
-	resp, err := client.Do(req)
-
-	if err != nil {
-		fmt.Println("error requesting url", err)
-		return nil, fmt.Errorf("error executing request: %v", err)
+	parts := strings.Split(host, ".")
+	if len(parts) >= 2 {
+		// crude but effective for most domains (e.g. blog.railway.com -> railway)
+		return parts[len(parts)-2]
 	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-
-	if err != nil {
-		fmt.Println("error reading resp body", err)
-		return nil, fmt.Errorf("error reading resp body: %v", err)
-	}
-
-	content := string(body)
-	// fmt.Println("content", content)
-	markdown, err := htmltomarkdown.ConvertString(content)
-	if err != nil {
-		fmt.Println("error converting to markdown", err)
-		return nil, fmt.Errorf("error converting to markdown: %v", err)
-	}
-
-	// fmt.Println("markdown", markdown)
-	return &markdown, nil
+	return host
 }

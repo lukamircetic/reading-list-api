@@ -1,6 +1,6 @@
 # Reading List Server
 
-Simple reading list server/database using Go and sqlite for keeping track of articles you have read. Uses Gemini API for extracting article details and creating a short summary. Main use case for me is to show on my personal website what I've been reading.
+Simple reading list server/database using Go and sqlite for keeping track of articles you have read. Uses Exa to extract article details and create a short summary. Main use case for me is to show on my personal website what I've been reading.
 
 ## Getting Started
 
@@ -33,12 +33,11 @@ Clean up binary from the last build:
 make clean
 ```
 
-## OpenRouter API Key (DeepSeek)
+## Exa API Key
 
-This project uses OpenRouter’s OpenAI-compatible API to call the `deepseek/deepseek-r1-0528:free` model (hardcoded).
+This project uses Exa’s API to fetch page content/metadata and produce a short summary.
 
-- Create an OpenRouter API key and set it in your env:
-  - `OPENROUTER_API_KEY`
-See OpenRouter docs: [`Using the OpenRouter API directly`](https://openrouter.ai/docs/quickstart#using-the-openrouter-api-directly).
+- Create an Exa API key and set it in your env:
+  - `EXA_API_KEY`
 Use the provided env example file (`env.example`) to know what variables to set (copy it to `.env`).
 

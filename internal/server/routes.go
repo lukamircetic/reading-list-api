@@ -12,9 +12,12 @@ import (
 
 func (s *Server) RegisterRoutes() http.Handler {
 	r := chi.NewRouter()
-	r.Use(middleware.Logger)
 
-	r.Use(cors.Handler(cors.Options{
+	r.Get("/health", s.healthHandler)
+
+	api := chi.NewRouter()
+	api.Use(middleware.Logger)
+	api.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   []string{"https://*", "http://*"},
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type"},
@@ -22,18 +25,18 @@ func (s *Server) RegisterRoutes() http.Handler {
 		MaxAge:           300,
 	}))
 
-	r.Get("/", s.HelloWorldHandler)
+	api.Get("/", s.HelloWorldHandler)
 
 	// TODO: add pagination
 	// took parts from chi example: https://github.com/go-chi/chi/blob/master/_examples/rest/main.go
-	r.Route("/articles", func(r chi.Router) {
+	api.Route("/articles", func(r chi.Router) {
 		r.With(Paginate).Get("/", s.GetArticlesPageHandler)
 		r.Post("/", s.CreateArticle)
 		r.Get("/all", s.GetAllArticlesHandler)
 
 	})
 
-	r.Get("/health", s.healthHandler)
+	r.Mount("/", api)
 
 	return r
 }
